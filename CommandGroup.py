@@ -1,48 +1,38 @@
+import asyncio
 from Command import Command
 from typing import List
-
 
 class CommandGroup(Command):
     _command_list: List[List[Command]]
 
     def __init__(self):
-        super().__init__()
+        self.interrupt_event = asyncio.Event()
         self._command_list = []
 
-    def add_parallel(self, commands: List[Command]):
+    def add_parallel(self, commands: List[Command]) -> CommandGroup
         """Takes in a list of commands."""
+        # Assign global interrupt to each command.
+        for command in commands:
+            command._setup_interrupt(self.interrupt_event)
+
         self._command_list.append(commands)
         return self
 
-    def add_sequential(self, command: Command):
+    def add_sequential(self, command: Command) -> CommandGroup:
         """Takes in a single command."""
+        command._setup_interrupt(self.interrupt_event)
+
         self._command_list.append([command])
         return self
 
-    def execute(self) -> None:
-        # First check if entire command list is exhausted.
-        if len(self._command_list) <= 0:
-            self.finished()
-            return
-        # Filter out finished commands first.
-        commands = [commands for commands in self._command_list[0] if not commands.is_done()]
+    async def _run(self):
+        for commands in self._command_list:
+            try:
+                await asyncio.wait([command._run() for command in commands], return_when=asyncio.ALL_COMPLETED)
+            except asyncio.CancelledError:
+                break
+        
+        return
 
-        # Then check if the current commands are finished.
-        # Otherwise run remaining commands.
-
-        if len(commands) <= 0:
-            del self._command_list[0]
-        else:
-            self._command_list[0] = commands
-            
-            # Command may finish, but it should be gone in the next iteration of execute().
-            for command in commands:
-                command.run()
-            
-
-
-    def on_end(self):
-        pass
-
-    def on_start(self):
-        pass
+    def start(self) -> None:
+        asyncio.get_event_loop().run_until_complete(self._run)

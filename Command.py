@@ -1,75 +1,66 @@
+import asyncio
+import datetime
 from typing import Callable
-from Events import Events
 
+class Command():
+    DEFAULT_PERIOD = 0.02
 
-class Command(Events):
-    class EVENTS:
-        on_start = "on_start"
-        on_end = "on_end"
-        on_execute = "on_execute"
-        on_interrupted = "on_interrupted"
+    def __init__():
+        self.interrupt_event = None
 
-    def __init__(self):
-        Events.__init__(self)
-        self._done = False
-        self._first = True
-        self._interupted = False
-        self._create_events([
-            Command.EVENTS.on_start,
-            Command.EVENTS.on_end,
-            Command.EVENTS.on_execute,
-            Command.EVENTS.on_interrupted
-        ])
-        # call start
-        self.add_listener(Command.EVENTS.on_start, lambda: self.__on_start())
-        self.add_listener(Command.EVENTS.on_end, lambda: self.__on_end())
-        self.add_listener(Command.EVENTS.on_execute, lambda: self.__on_execute())
-        self.add_listener(Command.EVENTS.on_interrupted, lambda: self.__on_interrupted())
-
-    def __on_start(self):
-        self.on_start()
-        self._first = False
-
-    def __on_execute(self):
-        self.execute()
-
-    def __on_end(self):
-        self.on_end()
-        self._done = True
-
-    def __on_interrupted(self):
-        self.on_interrupted()
-        self._interupted = True
-        self.finished()
+    #def requires(self):
+    #def _acquire_resources(self):
+    #def _release_resources(self):
 
     def interrupt(self):
-        self.trigger_event(Command.EVENTS.on_interrupted)
+        """Called by other Commands or CommandGroups"""
+        self.interrupt_event.set()
 
-    def run(self) -> None:
-        if self._first:
-            self.trigger_event(Command.EVENTS.on_start)
-        elif not self._done:
-            self.trigger_event(Command.EVENTS.on_execute)
+    async def _run(self):
+        """Coroutine run on the event loop"""
+        self.initialize()
 
-    def is_done(self) -> bool:
-        return self._done
+        while not self.isFinished() or self.interrupt_event.is_set():
+            interval_start = datetime.now()
+            self.execute()
+            interval_elapsed = min(Command.DEFAULT_PERIOD, (datetime.now() - start).seconds)
+            await asyncio.sleep(Command.DEFAULT_PERIOD - interval_elapsed)
+        
+        if self.interrupt.is_set():
+            self.task.cancel()
+        else:
+            self.end()
+            return
+    
+    def _setup_interrupt(self, interrupt_event) -> None:
+        self.interrupt_event = interrupt_event
 
-    def finished(self) -> None:
-        self.trigger_event(Command.EVENTS.on_end)
+    def start(self) -> None:
+        if self.interrupt_event is None:
+            self.interrupt_event = asyncio.Event()
+        
+        self.task = asyncio.ensure_future(self._run)
+        
+        try:
+            asyncio.get_event_loop().run_until_complete(self.task)
+        except asyncio.CancelledError:
+            self.interrupted()
 
     # These methods should be implemented by command creator
-
-    def on_start(self) -> None:
-        print("Default on_start() function - Overload me!")
-
-    def on_end(self) -> None:
-        print("Default on_end() function - Overload me!")
+    def end(self) -> None:
+        print("Default end() function - Overload me!")
 
     def execute(self) -> None:
         print("Default execute() function - Overload me!")
 
-    def on_interrupted(self) -> None:
-        print("Default on_interupted() function - Overload me!")
+    def initialize(self) -> None:
+        print("Default initialize() function - Overload me!")
+    
+    def interrupted(self) -> None:
+        print("Default interrupted() function - Overload me!")
+
+    def isFinished(self) -> bool:
+        print("Default isFinished() function - Overload me!")
 
 
 class InstantCommand(Command):
@@ -77,11 +68,11 @@ class InstantCommand(Command):
         Command.__init__(self)
         self._instant_method = method
 
-    def on_start(self):
+    def initialize(self):
         self._instant_method()
         self.finished()
 
-    def on_end(self):
+    def end(self):
         pass
 
     def execute(self):
