@@ -5,36 +5,75 @@ from typing import Callable
 class Command():
     DEFAULT_PERIOD = 0.02
 
-    def __init__():
+    def __init__(self, persistent=False: bool):
+        self.components = []
         self.interrupt_event = None
+        self.persistent = persistent
+        self.task = None
+    
+    # Private Methods
+    def _acquire_resources(self) -> bool:
 
-    #def requires(self):
-    #def _acquire_resources(self):
-    #def _release_resources(self):
+        # Attempt to lock all subsystems.
+        if any([component.locked() for component in self.components])
+            return False
+        else:
+            for component in self.components:
+                component.acquire()
+            
+            return True
 
-    def interrupt(self):
-        """Called by other Commands or CommandGroups"""
-        self.interrupt_event.set()
+    def _release_resources(self):
+        for component in self.components:
+            component.release()
+
+            # Notify in case some Teleop commands were suspended.
+            component.notify()
 
     async def _run(self):
         """Coroutine run on the event loop"""
+        
+        # Check & lock all components else abort.
+        if not self._acquire_resources():
+            return
+        
         self.initialize()
 
-        while not self.isFinished() or self.interrupt_event.is_set():
+        while not self.isFinished():
+            if self.interrupt_event.is_set():
+                self.interrupted()
+
+                if self.persistent:
+                    self._release_resources()
+                    await asyncio.wait([component.wait() for component in self.components])
+                    self._acquire_resources()
+                    self.interrupt_event.clear()
+                else:
+                    self.task.cancel()
+            
+            # Keep a constant interval.
             interval_start = datetime.now()
             self.execute()
             interval_elapsed = min(Command.DEFAULT_PERIOD, (datetime.now() - start).seconds)
             await asyncio.sleep(Command.DEFAULT_PERIOD - interval_elapsed)
         
-        if self.interrupt.is_set():
-            self.task.cancel()
-        else:
-            self.end()
-            return
+        self.end()
+        self._release_resources()
+        return
     
-    def _setup_interrupt(self, interrupt_event) -> None:
-        self.interrupt_event = interrupt_event
+    def _set_interrupt(self, event) -> None:
+        """Assign global interrupt from CommandGroup to Command"""
+        self.interrupt_event = event
 
+    # Public Methods
+    def cancel(self):
+        """Called by other Commands or CommandGroups"""
+        self.interrupt_event.set()
+    
+    def requires(self, component):
+        """Specifies what subsystems will be used in the command."""
+        self.components.append(component._get_lock())
+    
     def start(self) -> None:
         if self.interrupt_event is None:
             self.interrupt_event = asyncio.Event()
@@ -44,9 +83,9 @@ class Command():
         try:
             asyncio.get_event_loop().run_until_complete(self.task)
         except asyncio.CancelledError:
-            self.interrupted()
+            print("INFO: Command "+ self.__class__.__name__ +" interrupted.")
 
-    # These methods should be implemented by command creator
+    # User-Defined Methods
     def end(self) -> None:
         print("Default end() function - Overload me!")
 
@@ -61,19 +100,3 @@ class Command():
 
     def isFinished(self) -> bool:
         print("Default isFinished() function - Overload me!")
-
-
-class InstantCommand(Command):
-    def __init__(self, method: Callable):
-        Command.__init__(self)
-        self._instant_method = method
-
-    def initialize(self):
-        self._instant_method()
-        self.finished()
-
-    def end(self):
-        pass
-
-    def execute(self):
-        pass
